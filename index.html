@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Cotizaciones</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<link rel="stylesheet" href="css/estilos.css">
+</head>
+<body>
+
+<div class="top">
+  <h1>📄 Cotizaciones</h1>
+  <span id="estadoGuardado" class="guardado">✓ Todo se guarda solo</span>
+</div>
+
+<div class="ayuda">
+  <strong>¿Cómo se usa?</strong>
+  <ol>
+    <li>Escribe el <b>nombre del cliente</b> y el trabajo.</li>
+    <li>Escribe cada <b>trabajo con su precio</b>. El total se suma solo.</li>
+    <li>Toca el botón naranja <b>Descargar PDF</b> y envíalo por WhatsApp.</li>
+  </ol>
+  <p>Tranquilo: si cierras la página, <b>lo que escribiste queda guardado</b>.</p>
+</div>
+
+<div class="acciones-top">
+  <button type="button" class="btn btn-sec" onclick="pedirNueva()">➕ Empezar cotización nueva</button>
+  <button type="button" class="btn btn-sec" onclick="abrirAnteriores()">📁 Cotizaciones anteriores (<span id="numAnteriores">0</span>)</button>
+</div>
+
+<div class="layout">
+
+  <!-- ==================== FORMULARIO ==================== -->
+  <div class="panel" id="formulario">
+
+    <div class="seccion">
+      <h2>1. ¿Para quién es?</h2>
+      <p class="explica">Los datos del cliente y del trabajo.</p>
+      <div class="fila2">
+        <div class="campo">
+          <label for="tratamiento">Tratamiento</label>
+          <select id="tratamiento" onchange="cambio()">
+            <option value="Señor">Señor</option>
+            <option value="Señora">Señora</option>
+            <option value="Señores">Señores</option>
+          </select>
+        </div>
+        <div class="campo">
+          <label for="cliente">Nombre del cliente</label>
+          <input id="cliente" placeholder="Ej: Luz Dary" autocomplete="off" oninput="cambio()">
+        </div>
+      </div>
+      <div class="campo">
+        <label for="ciudadCliente">Ciudad o dirección del cliente <span class="opc">(opcional)</span></label>
+        <input id="ciudadCliente" placeholder="Ej: Bogotá" autocomplete="off" oninput="cambio()">
+      </div>
+      <div class="campo">
+        <label for="referencia">¿Qué obra es?</label>
+        <input id="referencia" placeholder="Ej: Ampliación y remodelación garaje" autocomplete="off" oninput="cambio()">
+      </div>
+      <div class="fila2">
+        <div class="campo">
+          <label for="ciudad">Ciudad donde escribes</label>
+          <input id="ciudad" value="Bogotá" oninput="cambio()">
+        </div>
+        <div class="campo">
+          <label for="fecha">Fecha</label>
+          <input id="fecha" type="date" oninput="cambio()">
+        </div>
+      </div>
+      <details class="plegable">
+        <summary>✏️ Cambiar el texto de introducción <span class="opc">(opcional)</span></summary>
+        <div class="campo">
+          <textarea id="intro" rows="4" oninput="cambio()">De acuerdo a su amable solicitud, me permito presentar a su consideración la siguiente propuesta para la obra en referencia, según el cuadro adjunto:</textarea>
+        </div>
+      </details>
+    </div>
+
+    <div class="seccion">
+      <h2>2. Trabajos y precios</h2>
+      <p class="explica">Escribe cada trabajo por separado. Los puntos de los miles se ponen solos.</p>
+      <label class="check-grande">
+        <input type="checkbox" id="incluirMetros" checked onchange="toggleMetros()">
+        Cobrar por metros (m²)
+      </label>
+      <div id="listaItems"></div>
+      <button type="button" class="btn btn-agregar" onclick="agregarItem()">➕ Agregar otro trabajo</button>
+      <div class="total-form">
+        <span>Total de la cotización</span>
+        <b id="totalForm">$0</b>
+      </div>
+    </div>
+
+    <div class="seccion">
+      <h2>3. Condiciones</h2>
+      <p class="explica">Validez, forma de pago y otras notas. Casi siempre son las mismas.</p>
+      <div id="listaCondiciones"></div>
+      <button type="button" class="btn btn-agregar" onclick="agregarCondicion()">➕ Agregar otra condición</button>
+    </div>
+
+    <div class="seccion">
+      <h2>4. Mis datos</h2>
+      <p class="explica">Tu firma, contacto y logo. Solo se llenan una vez.</p>
+      <details class="plegable">
+        <summary>👷 Ver o cambiar mis datos y logo</summary>
+        <div class="campo">
+          <label for="firmaNombre">Nombre de quien firma</label>
+          <input id="firmaNombre" value="GERSON SALAZAR" oninput="cambio()">
+        </div>
+        <div class="campo">
+          <label for="firmaCC">Cédula (C.C.)</label>
+          <input id="firmaCC" value="11.232.981" inputmode="numeric" oninput="cambio()">
+        </div>
+        <div class="fila2">
+          <div class="campo">
+            <label for="telefono">Celular</label>
+            <input id="telefono" value="3125034654" inputmode="tel" oninput="cambio()">
+          </div>
+          <div class="campo">
+            <label for="correo">Correo</label>
+            <input id="correo" value="gerson.salazar@hotmail.com" inputmode="email" oninput="cambio()">
+          </div>
+        </div>
+        <div class="campo">
+          <label for="logoInput">Logo / membrete</label>
+          <input type="file" id="logoInput" accept="image/*" onchange="cargarLogo(event)">
+          <div class="pista">Ya viene el logo LMS. Solo cambia esto si quieres otro logo.</div>
+          <button type="button" id="btnLogoOriginal" class="btn btn-gris" style="margin-top:8px;width:100%;" onclick="logoOriginal()" hidden>↩ Volver al logo original</button>
+        </div>
+      </details>
+    </div>
+
+    <button type="button" class="btn btn-pdf" onclick="descargarPDF()">⬇ Descargar PDF</button>
+  </div>
+
+  <!-- ==================== VISTA PREVIA ==================== -->
+  <div id="hojaWrapper">
+    <div class="hoja-titulo">👁 Así va a quedar tu cotización</div>
+    <div id="hoja"></div>
+    <button type="button" class="btn btn-sec solo-movil" style="width:100%;max-width:750px;" onclick="irA('formulario')">✏️ Volver a editar</button>
+  </div>
+
+</div>
+
+<!-- Barra fija abajo en el celular -->
+<div class="barra-movil">
+  <button type="button" class="btn btn-sec" onclick="irA('hojaWrapper')">👁 Ver cómo quedó</button>
+  <button type="button" class="btn btn-pdf" onclick="descargarPDF()">⬇ Descargar PDF</button>
+</div>
+
+<!-- Ventana de avisos (reemplaza las alertas del navegador) -->
+<div id="modalFondo" class="modal-fondo" hidden onclick="if(event.target===this) cerrarModal()">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitulo">
+    <h3 id="modalTitulo"></h3>
+    <div id="modalCuerpo" class="modal-cuerpo"></div>
+    <div id="modalBotones" class="modal-botones"></div>
+  </div>
+</div>
+
+<script src="js/logo.js"></script>
+<script src="js/app.js"></script>
+
+</body>
+</html>
