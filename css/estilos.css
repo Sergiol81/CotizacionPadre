@@ -193,7 +193,7 @@ h1{
   color:var(--rojo);
   border:none;
   border-radius:8px;
-  width:50px;
+  padding:0 12px;
   flex:none;
   font-size:18px;
   cursor:pointer;
@@ -376,3 +376,87 @@ table.cot tfoot td{
 #hoja .firma{margin-top:55px;}
 #hoja .firma p{margin:0;font-weight:bold;}
 .vacio{color:#aaa;font-style:italic;font-weight:normal;}
+
+/* ---------- SELECTOR: COTIZACIÓN O CUENTA DE COBRO ---------- */
+.selector-tipo{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:12px;
+  margin-bottom:16px;
+}
+.selector-pregunta{
+  grid-column:1 / -1;
+  font-size:19px;
+  font-weight:700;
+  color:var(--azul);
+}
+.tarjeta-tipo{
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  gap:4px;
+  padding:16px 12px;
+  background:#fff;
+  border:3px solid var(--borde);
+  border-radius:14px;
+  cursor:pointer;
+  font-family:inherit;
+  color:var(--texto);
+  text-align:center;
+  position:relative;
+}
+.tarjeta-tipo:hover{border-color:#9cb8dd;}
+.tarjeta-tipo.activa{
+  border-color:var(--naranja);
+  background:#fff6ec;
+  box-shadow:0 2px 10px rgba(217,130,43,.25);
+}
+.tarjeta-tipo.activa::after{
+  content:"Elegido";
+  position:absolute;
+  top:-12px;
+  right:10px;
+  background:var(--naranja);
+  color:#fff;
+  font-size:13px;
+  font-weight:700;
+  padding:2px 10px;
+  border-radius:12px;
+}
+.tarjeta-nombre{font-size:20px;font-weight:700;color:var(--azul);}
+.tarjeta-desc{font-size:14.5px;color:#5a6472;line-height:1.3;}
+@media (max-width:480px){
+  .tarjeta-tipo{padding:14px 8px;}
+  .tarjeta-nombre{font-size:17px;}
+  .tarjeta-desc{font-size:13.5px;}
+}
+
+/* Mostrar solo lo que corresponde al tipo de documento elegido */
+body[data-tipo="cobro"] .solo-cotizacion,
+body[data-tipo="cotizacion"] .solo-cobro{display:none !important;}
+body[data-tipo="cobro"] .campo-cliente{grid-column:1 / -1;}
+.campo-total-manual{margin-top:14px;}
+
+.anterior .tipo-doc{
+  display:inline-block;
+  font-size:13px;
+  font-weight:700;
+  padding:1px 8px;
+  border-radius:10px;
+  margin-bottom:4px;
+  background:#eaf1fb;
+  color:var(--azul-claro);
+}
+.anterior .tipo-doc.cobro{background:#fff1e0;color:#a45d14;}
+
+/* ---------- HOJA: CUENTA DE COBRO ---------- */
+#hoja .centro{text-align:center;}
+#hoja .numeroCuenta{margin-top:26px;text-align:center;}
+#hoja .bloqueCentro{margin-top:20px;text-align:center;font-weight:bold;}
+#hoja .bloqueCentro p{margin:0;}
+#hoja .debeA{margin-top:34px;}
+#hoja .datosPago{margin-top:22px;text-align:justify;}
+#hoja .firmaTitulo{margin-top:40px;}
+#hoja .firma .firmaImg{display:block;max-width:200px;max-height:80px;margin:6px 0 2px 0;}
+#hoja .firmaCobro{margin-top:10px;}
+table.cot tfoot td.etiqueta-total{text-align:left;}

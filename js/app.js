@@ -1,10 +1,17 @@
 // ==================== DATOS ====================
-const CAMPOS = ["ciudad","fecha","tratamiento","cliente","ciudadCliente","referencia","intro"];
-const CAMPOS_FIRMA = ["firmaNombre","firmaCC","telefono","correo"];
+// Dos tipos de documento: "cotizacion" y "cobro" (cuenta de cobro).
+const TIPOS = {
+  cotizacion: { nombre: "cotización", titulo: "Cotización", archivo: "Cotizacion" },
+  cobro:      { nombre: "cuenta de cobro", titulo: "Cuenta de cobro", archivo: "Cuenta_de_cobro" }
+};
+const CAMPOS = ["ciudad","fecha","tratamiento","cliente","ciudadCliente","referencia","intro",
+                "numero","tipoDoc","nit","totalManual"];
+const CAMPOS_FIRMA = ["firmaNombre","firmaNombreCompleto","firmaCC","notaIva","telefono","correo","datosPago"];
 const CLAVE_ACTUAL = "cotiz_actual";
 const CLAVE_HISTORIAL = "cotiz_historial";
 const CLAVE_FIRMA = "cotiz_firma";
 const CLAVE_LOGO = "cotiz_logo";
+const CLAVE_FIRMA_IMG = "cotiz_firma_img";
 const MAX_HISTORIAL = 60;
 const INTRO_DEFECTO = document.getElementById("intro").value;
 const CONDICIONES_DEFECTO = [
@@ -13,13 +20,17 @@ const CONDICIONES_DEFECTO = [
 ];
 
 let idActual = nuevoId();
+let tipoActual = "cotizacion";
 let items = [itemVacio()];
 let incluirMetros = true;
 let condiciones = CONDICIONES_DEFECTO.slice();
 let logoActual = LOGO_BASE64;
+let firmaImg = FIRMA_BASE64;
 
 function nuevoId(){ return "c" + Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
 function itemVacio(){ return {desc:"", metros:"", unit:"", total:""}; }
+// Los metros y el precio por m² solo existen en la cotización
+function usaMetros(){ return tipoActual === "cotizacion" && incluirMetros; }
 
 // ==================== UTILIDADES ====================
 function esc(t){
@@ -38,6 +49,12 @@ function parseMetros(v){
 function sumarTotal(lista){
   return lista.reduce((s,it)=>s + (parseInt(soloDigitos(it.total),10) || 0), 0);
 }
+// En la cuenta de cobro se puede poner solo el total, sin precio en cada trabajo
+function totalDocumento(tipo, lista, totalManual){
+  const suma = sumarTotal(lista);
+  if (suma > 0 || tipo !== "cobro") return suma;
+  return parseInt(soloDigitos(totalManual), 10) || 0;
+}
 
 // Fecha local (toISOString usa hora UTC y en la noche de Colombia daba el día siguiente)
 function hoy(){
@@ -49,6 +66,12 @@ function fechaLarga(iso){
   const meses = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
   const [y,m,d] = iso.split("-").map(x=>parseInt(x,10));
   return `${d} de ${meses[m-1]} de ${y}`;
+}
+// Número de cuenta de cobro a partir de la fecha: 2026-06-09 -> 09062026
+function numeroDesdeFecha(iso){
+  if(!iso) return "";
+  const [y,m,d] = iso.split("-");
+  return d + m + y;
 }
 function irA(id){
   document.getElementById(id).scrollIntoView({behavior:"smooth", block:"start"});
@@ -74,20 +97,61 @@ function mostrarModal(titulo, cuerpoHtml, botones){
 function cerrarModal(){ document.getElementById("modalFondo").hidden = true; }
 document.addEventListener("keydown", e=>{ if(e.key==="Escape") cerrarModal(); });
 
+// ==================== TIPO DE DOCUMENTO ====================
+// Ajusta la pantalla al tipo elegido (el CSS oculta lo que no corresponde)
+function aplicarTipo(){
+  document.body.dataset.tipo = tipoActual;
+  Object.keys(TIPOS).forEach(t=>{
+    const tarjeta = document.getElementById("tipo-" + t);
+    tarjeta.classList.toggle("activa", t === tipoActual);
+    tarjeta.setAttribute("aria-pressed", t === tipoActual ? "true" : "false");
+  });
+  document.getElementById("nombreTipo").textContent = TIPOS[tipoActual].nombre;
+  document.getElementById("cliente").placeholder =
+    tipoActual === "cobro" ? "Ej: Industrias Lácteas El Nogal" : "Ej: Luz Dary";
+}
+
+function elegirTipo(tipo){
+  if (tipo === tipoActual) return;
+  const q = obtenerEstado();
+  // Si no hay nada escrito, simplemente se cambia
+  if (!tieneContenido(q)) {
+    tipoActual = tipo;
+    aplicarTipo();
+    renderFormItems();
+    cambio();
+    return;
+  }
+  const actual = TIPOS[tipoActual].nombre;
+  const nuevo = TIPOS[tipo].nombre;
+  mostrarModal(
+    `¿Hacer una ${nuevo}?`,
+    `<p>La ${actual} que tienes abierta <b>no se pierde</b>: queda guardada en “Ver las anteriores”.</p>
+     <p>¿Quieres usar el mismo cliente y los mismos trabajos?</p>`,
+    [
+      {texto:`Sí, con los mismos datos`, clase:"btn-naranja", accion:()=>empezarNueva(tipo, true)},
+      {texto:`No, empezar en blanco`, clase:"btn-sec", accion:()=>empezarNueva(tipo, false)},
+      {texto:"Cancelar", clase:"btn-gris"}
+    ]
+  );
+}
+
 // ==================== FORMULARIO: ÍTEMS ====================
 function renderFormItems(){
   const cont = document.getElementById("listaItems");
+  const metros = usaMetros();
+  const cobro = tipoActual === "cobro";
   cont.innerHTML = items.map((it,i)=>`
     <div class="item-card" id="item-${i}">
       <div class="item-head">
         <span class="num">Trabajo ${i+1}</span>
-        ${items.length>1 ? `<button type="button" class="btn-quitar" onclick="pedirQuitarItem(${i})">🗑 Quitar</button>` : ""}
+        ${items.length>1 ? `<button type="button" class="btn-quitar" onclick="pedirQuitarItem(${i})">Quitar</button>` : ""}
       </div>
       <div class="campo">
         <label for="desc-${i}">¿Qué trabajo es?</label>
-        <textarea id="desc-${i}" rows="3" placeholder="Ej: Pañete y pintura de muros" oninput="items[${i}].desc=this.value; cambio()">${esc(it.desc)}</textarea>
+        <textarea id="desc-${i}" rows="3" placeholder="${cobro ? "Ej: Suministro mesón en granito negro" : "Ej: Pañete y pintura de muros"}" oninput="items[${i}].desc=this.value; cambio()">${esc(it.desc)}</textarea>
       </div>
-      ${incluirMetros ? `
+      ${cobro ? "" : metros ? `
       <div class="fila2">
         <div class="campo">
           <label for="metros-${i}">Metros (m²)</label>
@@ -106,7 +170,7 @@ function renderFormItems(){
       </div>
       `}
       <div class="campo" style="margin-bottom:0;">
-        <label for="total-${i}">Valor total de este trabajo</label>
+        <label for="total-${i}">${cobro ? `Valor de este trabajo <span class="opc">(opcional)</span>` : "Valor total de este trabajo"}</label>
         <div class="dinero"><input id="total-${i}" inputmode="numeric" value="${formatoMoneda(it.total)}" oninput="onDinero(this,${i},'total')"></div>
       </div>
     </div>
@@ -121,6 +185,11 @@ function onDinero(el, i, campo){
   if(campo === "unit") autoCalcular(i);
   cambio();
 }
+function onTotalManual(el){
+  const d = soloDigitos(el.value);
+  el.value = d ? Number(d).toLocaleString("es-CO") : "";
+  cambio();
+}
 function onMetros(el, i){
   items[i].metros = el.value;
   autoCalcular(i);
@@ -128,7 +197,7 @@ function onMetros(el, i){
 }
 // Total = metros x precio por m² (solo si ambos están llenos)
 function autoCalcular(i){
-  if(!incluirMetros) return;
+  if(!usaMetros()) return;
   const m = parseMetros(items[i].metros);
   const u = parseInt(items[i].unit, 10);
   if(m > 0 && u > 0){
@@ -164,7 +233,7 @@ function pedirQuitarItem(i){
     `¿Quitar el trabajo ${i+1}?`,
     it.desc.trim() ? `<p>“${esc(it.desc.trim().slice(0,120))}”</p>` : "",
     [
-      {texto:"🗑 Sí, quitarlo", clase:"btn-rojo", accion:()=>quitarItem(i)},
+      {texto:"Sí, quitarlo", clase:"btn-rojo", accion:()=>quitarItem(i)},
       {texto:"No, dejarlo", clase:"btn-gris"}
     ]
   );
@@ -176,7 +245,7 @@ function renderFormCondiciones(){
   cont.innerHTML = condiciones.map((c,i)=>`
     <div class="terminos-item">
       <input value="${esc(c)}" placeholder="Escribe la condición" aria-label="Condición ${i+1}" oninput="condiciones[${i}]=this.value; cambio()">
-      ${condiciones.length>1 ? `<button type="button" aria-label="Quitar condición" onclick="pedirQuitarCondicion(${i})">🗑</button>` : ""}
+      ${condiciones.length>1 ? `<button type="button" onclick="pedirQuitarCondicion(${i})">Quitar</button>` : ""}
     </div>
   `).join("");
 }
@@ -195,56 +264,141 @@ function quitarCondicion(i){
 function pedirQuitarCondicion(i){
   if(!condiciones[i].trim()){ quitarCondicion(i); return; }
   mostrarModal("¿Quitar esta condición?", `<p>“${esc(condiciones[i])}”</p>`, [
-    {texto:"🗑 Sí, quitarla", clase:"btn-rojo", accion:()=>quitarCondicion(i)},
+    {texto:"Sí, quitarla", clase:"btn-rojo", accion:()=>quitarCondicion(i)},
     {texto:"No, dejarla", clase:"btn-gris"}
   ]);
 }
 
-// ==================== LOGO ====================
+// ==================== LOGO Y FIRMA ====================
+// Las fotos del celular pesan mucho; se achican antes de guardarlas para que
+// quepan en la memoria del navegador. "limpiarFondo" vuelve blanco el papel
+// de la foto de la firma para que no salga grisáceo.
+function reducirImagen(archivo, anchoMax, limpiarFondo){
+  return new Promise((resolve, reject)=>{
+    const lector = new FileReader();
+    lector.onerror = reject;
+    lector.onload = e=>{
+      const img = new Image();
+      img.onerror = reject;
+      img.onload = ()=>{
+        const escala = Math.min(1, anchoMax / img.width);
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.round(img.width * escala);
+        canvas.height = Math.round(img.height * escala);
+        const ctx = canvas.getContext("2d");
+        ctx.fillStyle = "#fff";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        if (limpiarFondo) {
+          const datos = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const p = datos.data;
+          for (let k = 0; k < p.length; k += 4) {
+            const lum = 0.299*p[k] + 0.587*p[k+1] + 0.114*p[k+2];
+            if (lum > 165) { p[k] = p[k+1] = p[k+2] = 255; }
+          }
+          ctx.putImageData(datos, 0, 0);
+        }
+        resolve(canvas.toDataURL("image/jpeg", 0.9));
+      };
+      img.src = e.target.result;
+    };
+    lector.readAsDataURL(archivo);
+  });
+}
+function errorImagen(){
+  mostrarModal("No se pudo usar esa imagen", "<p>Intenta con otra foto.</p>");
+}
+
 function cargarLogo(evento){
   const archivo = evento.target.files[0];
   if(!archivo) return;
-  const lector = new FileReader();
-  lector.onload = function(e){
-    logoActual = e.target.result;
+  reducirImagen(archivo, 1500, false).then(dataUrl=>{
+    logoActual = dataUrl;
     try{ localStorage.setItem(CLAVE_LOGO, logoActual); }catch(err){}
-    actualizarBotonLogo();
+    actualizarBotonesImagenes();
     render();
-  };
-  lector.readAsDataURL(archivo);
+  }).catch(errorImagen);
 }
 function logoOriginal(){
   logoActual = LOGO_BASE64;
   try{ localStorage.removeItem(CLAVE_LOGO); }catch(err){}
   document.getElementById("logoInput").value = "";
-  actualizarBotonLogo();
+  actualizarBotonesImagenes();
   render();
 }
-function actualizarBotonLogo(){
+function cargarFirma(evento){
+  const archivo = evento.target.files[0];
+  if(!archivo) return;
+  reducirImagen(archivo, 600, true).then(dataUrl=>{
+    firmaImg = dataUrl;
+    try{ localStorage.setItem(CLAVE_FIRMA_IMG, firmaImg); }catch(err){}
+    actualizarBotonesImagenes();
+    render();
+  }).catch(errorImagen);
+}
+// "ninguna" recuerda que él decidió no poner firma (para no volver a la original)
+function quitarFirma(){
+  firmaImg = "";
+  try{ localStorage.setItem(CLAVE_FIRMA_IMG, "ninguna"); }catch(err){}
+  document.getElementById("firmaInput").value = "";
+  actualizarBotonesImagenes();
+  render();
+}
+function firmaOriginal(){
+  firmaImg = FIRMA_BASE64;
+  try{ localStorage.removeItem(CLAVE_FIRMA_IMG); }catch(err){}
+  document.getElementById("firmaInput").value = "";
+  actualizarBotonesImagenes();
+  render();
+}
+function actualizarBotonesImagenes(){
   document.getElementById("btnLogoOriginal").hidden = (logoActual === LOGO_BASE64);
+  document.getElementById("btnQuitarFirma").hidden = !firmaImg;
+  document.getElementById("btnFirmaOriginal").hidden = (firmaImg === FIRMA_BASE64);
 }
 
 // ==================== VISTA PREVIA ====================
-function render(){
-  const val = id => document.getElementById(id).value;
-  const ciudad = val("ciudad") || "Ciudad";
-  const fecha = fechaLarga(val("fecha"));
-  const tratamiento = val("tratamiento");
-  const cliente = val("cliente") || "___________";
-  const ciudadCliente = val("ciudadCliente");
-  const referencia = val("referencia") || "___________";
-  const intro = val("intro");
-  const firmaNombre = val("firmaNombre");
-  const firmaCC = val("firmaCC");
-  const telefono = val("telefono");
-  const correo = val("correo");
+function leerFormulario(){
+  const d = {};
+  CAMPOS.concat(CAMPOS_FIRMA).forEach(id=>{ d[id] = document.getElementById(id).value; });
+  return d;
+}
 
-  const totalGeneral = sumarTotal(items);
+function render(){
+  const d = leerFormulario();
+  const sumaItems = sumarTotal(items);
+  const total = totalDocumento(tipoActual, items, d.totalManual);
+
+  document.getElementById("hoja").innerHTML =
+    tipoActual === "cobro" ? hojaCobro(d, total) : hojaCotizacion(d, total);
+
+  document.getElementById("totalForm").textContent = "$" + (formatoMoneda(total) || "0");
+  // El "Total a pagar" a mano solo aparece si ningún trabajo tiene precio
+  document.getElementById("campoTotalManual").hidden = !(tipoActual === "cobro" && sumaItems === 0);
+  document.getElementById("numero").placeholder = "Se pone solo: " + numeroDesdeFecha(d.fecha);
+}
+
+// La imagen de la firma solo va en la cuenta de cobro
+function bloqueFirma(d, conImagen){
+  return `
+    ${conImagen && firmaImg ? `<img class="firmaImg" src="${firmaImg}" alt="Firma">` : ""}
+    <p>${esc(d.firmaNombre.toUpperCase())}</p>
+    <p>C.C ${esc(d.firmaCC)}</p>`;
+}
+function piePagina(d){
+  return `
+    <div class="piePagina">
+      ${d.telefono ? "Movil "+esc(d.telefono)+"<br>" : ""}${d.correo ? "E-mail "+esc(d.correo) : ""}
+    </div>`;
+}
+
+function hojaCotizacion(d, total){
+  const metros = usaMetros();
   const filas = items.map((it,i)=>`
       <tr>
         <td class="num">${i+1}</td>
         <td>${it.desc.trim() ? esc(it.desc).replace(/\n/g,"<br>") : '<span class="vacio">Descripción del trabajo</span>'}</td>
-        ${incluirMetros ? `<td class="val">${it.metros ? esc(String(it.metros).replace(".", ","))+" m²" : ""}</td>` : ""}
+        ${metros ? `<td class="val">${it.metros ? esc(String(it.metros).replace(".", ","))+" m²" : ""}</td>` : ""}
         <td class="val">${it.unit ? "$"+formatoMoneda(it.unit) : ""}</td>
         <td class="val">${it.total ? "$"+formatoMoneda(it.total) : ""}</td>
       </tr>
@@ -252,53 +406,99 @@ function render(){
 
   const condicionesHtml = condiciones.filter(c=>c.trim()!=="").map(c=>`<li>${esc(c)}</li>`).join("");
 
-  document.getElementById("hoja").innerHTML = `
+  return `
     <div class="membrete"><img src="${logoActual}" alt="Logo empresa"></div>
     <div class="contenido">
-      <div class="fechaLinea">${esc(ciudad)} ${fecha}</div>
+      <div class="fechaLinea">${esc(d.ciudad || "Ciudad")} ${fechaLarga(d.fecha)}</div>
       <div class="destinatario">
-        <p>${esc(tratamiento)} :</p>
-        <p>${esc(cliente.toUpperCase())}</p>
-        <p>${esc(ciudadCliente)}</p>
+        <p>${esc(d.tratamiento)} :</p>
+        <p>${esc((d.cliente || "___________").toUpperCase())}</p>
+        <p>${esc(d.ciudadCliente)}</p>
       </div>
-      <div class="ref">Ref: ${esc(referencia.toUpperCase())}</div>
-      <div class="intro">${esc(intro).replace(/\n/g,"<br>")}</div>
+      <div class="ref">Ref: ${esc((d.referencia || "___________").toUpperCase())}</div>
+      <div class="intro">${esc(d.intro).replace(/\n/g,"<br>")}</div>
       <table class="cot">
         <thead>
           <tr>
             <th style="width:6%">ITEM</th>
             <th>DESCRIPCION</th>
-            ${incluirMetros ? `<th style="width:12%">M²</th>` : ""}
-            <th style="width:${incluirMetros ? 15 : 16}%">VR UNITARIO</th>
-            <th style="width:${incluirMetros ? 15 : 16}%">VR TOTAL</th>
+            ${metros ? `<th style="width:12%">M²</th>` : ""}
+            <th style="width:${metros ? 15 : 16}%">VR UNITARIO</th>
+            <th style="width:${metros ? 15 : 16}%">VR TOTAL</th>
           </tr>
         </thead>
         <tbody>
           ${filas}
         </tbody>
         <tfoot>
-          <tr><td colspan="${incluirMetros ? 4 : 3}">TOTAL</td><td class="val">$${formatoMoneda(totalGeneral)}</td></tr>
+          <tr><td colspan="${metros ? 4 : 3}">TOTAL</td><td class="val">$${formatoMoneda(total)}</td></tr>
         </tfoot>
       </table>
       <div class="condiciones">
         <ul>${condicionesHtml}</ul>
       </div>
-      <div class="firma">
-        <p>${esc(firmaNombre.toUpperCase())}</p>
-        <p>C.C ${esc(firmaCC)}</p>
-      </div>
-      <div class="piePagina">
-        ${telefono ? "Movil "+esc(telefono)+"<br>" : ""}${correo ? "E-mail "+esc(correo) : ""}
-      </div>
+      <div class="firma">${bloqueFirma(d)}</div>
+      ${piePagina(d)}
     </div>
   `;
+}
 
-  document.getElementById("totalForm").textContent = "$" + (formatoMoneda(totalGeneral) || "0");
+// Mismo formato de la cuenta de cobro que usa en Word
+function hojaCobro(d, total){
+  const filas = items.map((it,i)=>`
+      <tr>
+        <td class="num">${i+1}</td>
+        <td><b>${it.desc.trim() ? esc(it.desc).replace(/\n/g,"<br>") : '<span class="vacio">Descripción del trabajo</span>'}</b></td>
+        <td class="val">${it.total ? "$ "+formatoMoneda(it.total) : ""}</td>
+      </tr>
+  `).join("");
+  const numero = d.numero.trim() || numeroDesdeFecha(d.fecha);
+  const nit = d.nit.trim();
+
+  return `
+    <div class="membrete"><img src="${logoActual}" alt="Logo empresa"></div>
+    <div class="contenido">
+      <div class="fechaLinea">${esc(d.ciudad || "Ciudad")} ${fechaLarga(d.fecha)}</div>
+      <div class="numeroCuenta">CUENTA DE COBRO No ${esc(numero)}</div>
+      <div class="bloqueCentro">
+        <p>${esc((d.cliente || "___________").toUpperCase())}</p>
+        ${nit ? `<p>${esc(d.tipoDoc)} ${esc(nit)}</p>` : ""}
+      </div>
+      <div class="bloqueCentro debeA">
+        <p>DEBE A :</p>
+        <p>${esc((d.firmaNombreCompleto || d.firmaNombre).toUpperCase())}</p>
+        ${d.notaIva.trim() ? `<p>${esc(d.notaIva.toUpperCase())}</p>` : ""}
+        <p>C.C ${esc(d.firmaCC)}</p>
+      </div>
+      <div class="bloqueCentro">POR CONCEPTO DE:</div>
+      <table class="cot">
+        <thead>
+          <tr>
+            <th style="width:8%">ITEM</th>
+            <th>DESCRIPCION</th>
+            <th style="width:22%">VR TOTAL</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${filas}
+        </tbody>
+        <tfoot>
+          <tr><td></td><td class="etiqueta-total">TOTAL A PAGAR</td><td class="val">$ ${formatoMoneda(total) || "0"}</td></tr>
+        </tfoot>
+      </table>
+      ${d.datosPago.trim() ? `<div class="datosPago">${esc(d.datosPago).replace(/\n/g,"<br>")}</div>` : ""}
+      <div class="firma firmaTitulo">
+        <div>FIRMA</div>
+        <div class="firmaCobro">${bloqueFirma(d, true)}</div>
+      </div>
+      ${piePagina(d)}
+    </div>
+  `;
 }
 
 // ==================== GUARDADO AUTOMÁTICO ====================
-// Todo se guarda en el navegador de este equipo/celular. Cada cotización con
-// contenido queda además en "Cotizaciones anteriores".
+// Todo se guarda en el navegador de este equipo/celular. Cada documento con
+// contenido queda además en "Ver las anteriores".
 function leer(clave, porDefecto){
   try{
     const v = localStorage.getItem(clave);
@@ -315,6 +515,7 @@ function obtenerEstado(){
   CAMPOS.forEach(id=>{ campos[id] = document.getElementById(id).value; });
   return {
     id: idActual,
+    tipo: tipoActual,
     campos,
     items: items.map(x=>({...x})),
     condiciones: condiciones.slice(),
@@ -323,13 +524,17 @@ function obtenerEstado(){
   };
 }
 function tieneContenido(q){
-  return q.campos.cliente.trim() || q.campos.referencia.trim() ||
+  return q.campos.cliente.trim() || (q.campos.referencia || "").trim() ||
          q.items.some(it=>it.desc.trim() || soloDigitos(it.total));
 }
 function aplicarEstado(q){
   idActual = q.id || nuevoId();
+  tipoActual = TIPOS[q.tipo] ? q.tipo : "cotizacion";
   CAMPOS.forEach(id=>{
-    if(q.campos && q.campos[id] != null) document.getElementById(id).value = q.campos[id];
+    const el = document.getElementById(id);
+    if (q.campos && q.campos[id] != null) el.value = q.campos[id];
+    else if (el.tagName === "SELECT") el.selectedIndex = 0;
+    else el.value = "";
   });
   items = (q.items && q.items.length)
     ? q.items.map(x=>{
@@ -339,9 +544,10 @@ function aplicarEstado(q){
         return it;
       })
     : [itemVacio()];
-  condiciones = (Array.isArray(q.condiciones) && q.condiciones.length) ? q.condiciones.slice() : [""];
+  condiciones = (Array.isArray(q.condiciones) && q.condiciones.length) ? q.condiciones.slice() : CONDICIONES_DEFECTO.slice();
   incluirMetros = q.incluirMetros !== false;
   document.getElementById("incluirMetros").checked = incluirMetros;
+  aplicarTipo();
   renderFormItems();
   renderFormCondiciones();
   render();
@@ -368,7 +574,7 @@ function guardarAhora(){
   }
 
   const el = document.getElementById("estadoGuardado");
-  el.textContent = ok ? "✓ Guardado" : "⚠ No se pudo guardar";
+  el.textContent = ok ? "Guardado" : "No se pudo guardar";
   el.classList.toggle("error", !ok);
   actualizarContadorAnteriores();
 }
@@ -379,28 +585,42 @@ function actualizarContadorAnteriores(){
 // ==================== NUEVA / ANTERIORES ====================
 function pedirNueva(){
   mostrarModal(
-    "¿Empezar una cotización nueva?",
-    "<p>La que tienes ahora <b>no se pierde</b>: queda guardada en “Cotizaciones anteriores”.</p><p>Tus datos, el logo y las condiciones se mantienen.</p>",
+    "¿Qué vas a hacer?",
+    "<p>Lo que tienes abierto ahora <b>no se pierde</b>: queda guardado en “Ver las anteriores”.</p>",
     [
-      {texto:"➕ Sí, empezar una nueva", clase:"btn-naranja", accion:empezarNueva},
-      {texto:"No, seguir con esta", clase:"btn-gris"}
+      {texto:"Una cotización nueva", clase:"btn-naranja", accion:()=>empezarNueva("cotizacion", false)},
+      {texto:"Una cuenta de cobro nueva", clase:"btn-naranja", accion:()=>empezarNueva("cobro", false)},
+      {texto:"Cancelar, seguir con esta", clase:"btn-gris"}
     ]
   );
 }
-function empezarNueva(){
+// conDatos: copia el cliente y los trabajos del documento abierto (por ejemplo,
+// para hacer la cuenta de cobro de un trabajo que antes se cotizó)
+function empezarNueva(tipo, conDatos){
   guardarAhora();
+  const base = obtenerEstado();
+  const campos = {
+    ciudad: base.campos.ciudad || "Bogotá",
+    fecha: hoy(),
+    tratamiento: "Señor",
+    cliente: "",
+    ciudadCliente: "",
+    referencia: "",
+    intro: INTRO_DEFECTO,
+    numero: "",
+    tipoDoc: "NIT",
+    nit: "",
+    totalManual: ""
+  };
+  if (conDatos) {
+    ["tratamiento","cliente","ciudadCliente","referencia","intro","tipoDoc","nit","totalManual"]
+      .forEach(k=>{ campos[k] = base.campos[k]; });
+  }
   aplicarEstado({
     id: nuevoId(),
-    campos: {
-      ciudad: document.getElementById("ciudad").value || "Bogotá",
-      fecha: hoy(),
-      tratamiento: "Señor",
-      cliente: "",
-      ciudadCliente: "",
-      referencia: "",
-      intro: INTRO_DEFECTO
-    },
-    items: [itemVacio()],
+    tipo,
+    campos,
+    items: conDatos ? base.items : [itemVacio()],
     condiciones: condiciones.filter(c=>c.trim()!==""),
     incluirMetros
   });
@@ -412,28 +632,31 @@ function abrirAnteriores(){
   guardarAhora();
   const historial = leer(CLAVE_HISTORIAL, []);
   if(!historial.length){
-    mostrarModal("📁 Cotizaciones anteriores",
-      "<p>Todavía no hay cotizaciones guardadas. Apenas escribas una, aparecerá aquí.</p>");
+    mostrarModal("Documentos anteriores",
+      "<p>Todavía no hay nada guardado. Apenas escribas una cotización o cuenta de cobro, aparecerá aquí.</p>");
     return;
   }
   const lista = historial.map(h=>{
     const esActual = h.id === idActual;
+    const tipo = TIPOS[h.tipo] ? h.tipo : "cotizacion";
+    const total = totalDocumento(tipo, h.items, h.campos.totalManual);
     return `
       <div class="anterior ${esActual ? "actual" : ""}">
+        <span class="tipo-doc ${tipo}">${TIPOS[tipo].titulo}</span>
         <div class="titulo">${esc(h.campos.cliente.trim() || "Sin nombre de cliente")}</div>
         <div class="detalle">
-          ${h.campos.referencia.trim() ? esc(h.campos.referencia) + "<br>" : ""}
-          Total $${formatoMoneda(sumarTotal(h.items)) || "0"} · ${fechaLarga(h.campos.fecha)}
+          ${(h.campos.referencia || "").trim() ? esc(h.campos.referencia) + "<br>" : ""}
+          Total $${formatoMoneda(total) || "0"} · ${fechaLarga(h.campos.fecha)}
         </div>
         ${esActual
-          ? `<div class="etiqueta">✏️ Es la que tienes abierta ahora</div>`
+          ? `<div class="etiqueta">Es la que tienes abierta ahora</div>`
           : `<div class="acc">
                <button type="button" class="btn btn-sec" onclick="abrirAnterior('${h.id}')">Abrir</button>
-               <button type="button" class="btn btn-gris" onclick="pedirBorrarAnterior('${h.id}')">🗑 Borrar</button>
+               <button type="button" class="btn btn-gris" onclick="pedirBorrarAnterior('${h.id}')">Borrar</button>
              </div>`}
       </div>`;
   }).join("");
-  mostrarModal("📁 Cotizaciones anteriores",
+  mostrarModal("Documentos anteriores",
     `<p>Toca <b>Abrir</b> para verla, cambiarla o volver a descargarla.</p>${lista}`,
     [{texto:"Cerrar", clase:"btn-gris"}]);
 }
@@ -449,10 +672,11 @@ function abrirAnterior(id){
 function pedirBorrarAnterior(id){
   const q = leer(CLAVE_HISTORIAL, []).find(h=>h.id === id);
   if(!q) return;
-  mostrarModal("¿Borrar esta cotización?",
-    `<p>Se borrará la cotización de <b>${esc(q.campos.cliente.trim() || "Sin nombre")}</b>. Esto no se puede deshacer.</p>`,
+  const tipo = TIPOS[q.tipo] ? q.tipo : "cotizacion";
+  mostrarModal(`¿Borrar esta ${TIPOS[tipo].nombre}?`,
+    `<p>Se borrará la ${TIPOS[tipo].nombre} de <b>${esc(q.campos.cliente.trim() || "Sin nombre")}</b>. Esto no se puede deshacer.</p>`,
     [
-      {texto:"🗑 Sí, borrarla", clase:"btn-rojo", accion:()=>{
+      {texto:"Sí, borrarla", clase:"btn-rojo", accion:()=>{
         escribir(CLAVE_HISTORIAL, leer(CLAVE_HISTORIAL, []).filter(h=>h.id !== id));
         actualizarContadorAnteriores();
         abrirAnteriores();
@@ -483,7 +707,7 @@ function nombreArchivoPDF(){
   const cliente = document.getElementById("cliente").value.trim() || "cliente";
   const limpio = cliente.normalize("NFD").replace(/[̀-ͯ]/g,"")
     .replace(/[^a-zA-Z0-9]+/g,"_").replace(/^_+|_+$/g,"");
-  return "Cotizacion_" + (limpio || "cliente") + ".pdf";
+  return TIPOS[tipoActual].archivo + "_" + (limpio || "cliente") + ".pdf";
 }
 
 let generandoPDF = false;
@@ -493,7 +717,7 @@ function descargarPDF(){
   guardarAhora();
 
   const botones = document.querySelectorAll(".btn-pdf");
-  botones.forEach(b => { b.disabled = true; b.dataset.texto = b.textContent; b.textContent = "⏳ Preparando PDF..."; });
+  botones.forEach(b => { b.disabled = true; b.dataset.texto = b.textContent; b.textContent = "Preparando PDF..."; });
 
   const nombreArchivo = nombreArchivoPDF();
   const hoja = document.getElementById("hoja");
@@ -536,7 +760,7 @@ function descargarPDF(){
     mostrarPdfListo(blob, nombreArchivo, esIOS);
   }).catch((error) => {
     console.error("Error generando el PDF:", error);
-    mostrarModal("😕 No se pudo crear el PDF",
+    mostrarModal("No se pudo crear el PDF",
       "<p>Intenta de nuevo. Si sigue fallando, revisa que el celular tenga <b>internet</b>.</p>");
   }).finally(() => {
     generandoPDF = false;
@@ -556,10 +780,10 @@ function mostrarPdfListo(blob, nombreArchivo, esIOS){
 
   const botones = [];
   if (puedeCompartir) {
-    botones.push({ texto: "📤 Enviar por WhatsApp o correo", clase: "btn-verde",
+    botones.push({ texto: "Enviar por WhatsApp o correo", clase: "btn-verde",
       accion: () => navigator.share({ files: [archivo] }).catch(() => {}) });
   }
-  botones.push({ texto: esIOS ? "👁 Abrir el PDF" : "💾 Guardar el PDF",
+  botones.push({ texto: esIOS ? "Abrir el PDF" : "Guardar el PDF",
     clase: puedeCompartir ? "btn-sec" : "btn-naranja",
     accion: () => guardarArchivo(url, nombreArchivo, esIOS) });
   botones.push({ texto: "Cerrar", clase: "btn-gris" });
@@ -572,7 +796,7 @@ function mostrarPdfListo(blob, nombreArchivo, esIOS){
   } else {
     ayuda = "<p>Toca <b>Guardar el PDF</b>. El archivo queda en la carpeta de <b>Descargas</b>.</p>";
   }
-  mostrarModal("✅ ¡Tu cotización está lista!", ayuda, botones);
+  mostrarModal(`¡Tu ${TIPOS[tipoActual].nombre} está lista!`, ayuda, botones);
 }
 
 function guardarArchivo(url, nombreArchivo, esIOS){
@@ -600,15 +824,22 @@ function guardarArchivo(url, nombreArchivo, esIOS){
   if (firma) CAMPOS_FIRMA.forEach(id => { if (firma[id] != null) document.getElementById(id).value = firma[id]; });
 
   try { const logo = localStorage.getItem(CLAVE_LOGO); if (logo) logoActual = logo; } catch (e) {}
+  firmaImg = FIRMA_BASE64;
+  try {
+    const guardada = localStorage.getItem(CLAVE_FIRMA_IMG);
+    if (guardada === "ninguna") firmaImg = "";
+    else if (guardada) firmaImg = guardada;
+  } catch (e) {}
 
   const actual = leer(CLAVE_ACTUAL, null);
   if (actual && actual.campos) {
     aplicarEstado(actual);
   } else {
+    aplicarTipo();
     renderFormItems();
     renderFormCondiciones();
     render();
   }
   actualizarContadorAnteriores();
-  actualizarBotonLogo();
+  actualizarBotonesImagenes();
 })();
